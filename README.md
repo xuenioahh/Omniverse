@@ -2,6 +2,20 @@
 
 `Omniverse` is a Vite + React speaking-practice application that combines voice conversation practice, presentation rehearsal, local account management, and report/history views in one project.
 
+## Project Context
+
+- Team: `Omniverse`
+- Session: `ENT208TC Session 4 Group 25`
+- Academic Year: `2025-2026`
+
+## Team Members
+
+- Yujie Yang — `2363253`
+- Zihan Jiang — `2362327`
+- Yile Zhang — `2363305`
+- Xinyu Shen — `2363210`
+- Zhuoru Zhang — `2363097`
+
 ## Core Features
 
 - local register / login flow
