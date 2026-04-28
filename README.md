@@ -63,6 +63,21 @@ The current repository version is structured so the app can still run locally wi
 - TanStack Query
 - browser `localStorage`
 
+## Demo
+
+- Live demo: `https://omniverse-ent208.vercel.app`
+- Repository: `https://github.com/xuenioahh/Omniverse`
+
+## Screenshots
+
+### Presentation feedback
+
+![Presentation feedback](./docs/images/presentation-feedback.png)
+
+### Voice practice report
+
+![Voice practice report](./docs/images/voice-report.png)
+
 ## Local Development
 
 ```bash
