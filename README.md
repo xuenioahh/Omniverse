@@ -1,12 +1,21 @@
 # Omniverse
 
-`Omniverse` is a Vite + React speaking-practice application that combines voice conversation practice, presentation rehearsal, local account management, and report/history views in one project.
+Omniverse is a local-first speaking practice web application built for `ENT208TC Session 4 Group 25`. It combines scenario-based voice conversation, presentation rehearsal, progress tracking, and report generation in a single Vite + React project.
 
-## Project Context
+## Overview
 
-- Team: `Omniverse`
-- Session: `ENT208TC Session 4 Group 25`
-- Academic Year: `2025-2026`
+The project was designed to support communication practice in two main modes:
+
+- voice conversation practice for scenario-based speaking
+- presentation rehearsal for slide-driven speaking tasks
+
+The current repository version is structured so the app can still run locally without requiring a full hosted backend, which makes it easier to review, demonstrate, and submit for coursework.
+
+## Project Information
+
+- Team name: `Omniverse`
+- Module / session: `ENT208TC Session 4 Group 25`
+- Academic year: `2025-2026`
 
 ## Team Members
 
@@ -16,35 +25,35 @@
 - Xinyu Shen — `2363210`
 - Zhuoru Zhang — `2363097`
 
-## Core Features
+## Key Features
 
-- local register / login flow
-- protected app routes
+- local register and login flow
+- protected routes for authenticated access
 - scenario-based voice conversation practice
-- presentation rehearsal flow
-- history and report pages
-- local persistence through browser storage
-- local API endpoints for analysis and coaching logic
+- presentation rehearsal workflow
+- practice history and report pages
+- browser-based local persistence
+- local API endpoints for coaching and analysis
 
-## Main User Journeys
+## User Flows
 
-### Voice practice
+### Voice Practice
 
-1. sign in
-2. choose a voice scenario
-3. configure practice mode
-4. enter live conversation
-5. end session and review the report
+1. sign in to the app
+2. choose a speaking scenario
+3. configure the practice mode
+4. complete a live voice session
+5. review the generated report and history
 
-### Presentation practice
+### Presentation Practice
 
-1. sign in
-2. upload or prepare presentation material
-3. rehearse slide-by-slide
+1. sign in to the app
+2. prepare or upload presentation material
+3. rehearse the presentation flow
 4. receive pause feedback and analysis
-5. review presentation history and reports
+5. review presentation reports and history
 
-## Tech Stack
+## Technology Stack
 
 - React
 - React Router
@@ -52,51 +61,51 @@
 - Tailwind CSS
 - Radix UI / shadcn-style components
 - TanStack Query
-- local browser storage
+- browser `localStorage`
 
-## Run Locally
+## Local Development
 
 ```bash
 npm install
 npm run dev
 ```
 
-Open the local Vite URL shown in the terminal after startup.
+After startup, open the local Vite URL shown in the terminal.
 
-## Scripts
+## Available Scripts
 
-- `npm run dev`: start local development
-- `npm run build`: create a production build
-- `npm run lint`: run ESLint
-- `npm run lint:fix`: auto-fix lint issues where possible
-- `npm run typecheck`: run TypeScript checking for configured files
-- `npm run preview`: preview the built app
+- `npm run dev` starts local development
+- `npm run build` creates a production build
+- `npm run lint` runs ESLint
+- `npm run lint:fix` auto-fixes lint issues where possible
+- `npm run typecheck` runs configured TypeScript checking
+- `npm run preview` previews the production build locally
 
-## Project Structure
+## Repository Structure
 
-- `src/pages/`: route-level pages
+- `src/pages/`: route-level application pages
 - `src/components/`: reusable feature and UI components
-- `src/lib/`: local business logic, storage helpers, and shared utilities
+- `src/lib/`: storage, business logic, and shared utilities
 - `src/api/`: local client wrappers
-- `api/`: local server-style endpoints used for analysis and coaching
-- `supabase/`: retained schema/setup material for admin-side data structure
+- `api/`: local server-style endpoints for analysis and coaching
+- `supabase/`: retained admin-side schema material
 
-## Local-First Behavior
+## Local-First Architecture
 
-The current project is designed to stay runnable without a hosted backend:
+This project is intentionally local-first for demonstration and coursework review:
 
-- user data is stored locally
-- practice history is stored locally
+- account data can be stored locally
+- practice history can be stored locally
 - reports can be generated through local logic and fallback behavior
 
-Some API routes can use model-backed behavior when a compatible key or deployment setup exists, but the app still keeps a usable local path.
+Some API routes can also support model-backed behavior when the relevant environment setup is available.
 
 ## Environment Notes
 
 - `.env.example` is included as a reference
 - no mandatory hosted backend is required for the base local workflow
-- browser support is important because parts of the app rely on speech, media, and storage APIs
+- browser support matters because the app relies on media, speech, and storage APIs
 
-## Upload To GitHub
+## Submission Notes
 
-If you want to publish only this project, upload the contents of this `Omniverse/` folder as the repository root.
+For a concise project summary and release-style submission text, see [RELEASE_NOTES.md](/Users/zhangzhuoru/Desktop/ent208/Omniverse/RELEASE_NOTES.md).
