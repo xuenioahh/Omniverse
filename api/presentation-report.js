@@ -46,18 +46,186 @@ function fallbackReport({ duration, totalPages, fileName }) {
   };
 }
 
-function safeJsonParse(text) {
-  try {
-    return JSON.parse(text);
-  } catch {
-    const match = text.match(/\{[\s\S]*\}/);
-    if (!match) return null;
-    try {
-      return JSON.parse(match[0]);
-    } catch {
-      return null;
-    }
+import { requestStructuredLlm } from "./_llm.js";
+
+function clampPresentationScore(value, fallback) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  return Math.max(0, Math.min(10, numeric));
+}
+
+function roundScore(value, fallback) {
+  const clamped = clampPresentationScore(value, fallback);
+  return Number.isFinite(clamped) ? Math.round(clamped * 10) / 10 : fallback;
+}
+
+function sanitizeStringList(items, limit) {
+  return (Array.isArray(items) ? items : [])
+    .map((item) => String(item || "").trim())
+    .filter(Boolean)
+    .slice(0, limit);
+}
+
+function sanitizeScores(scores, fallback) {
+  if (!scores || typeof scores !== "object") return fallback;
+
+  return {
+    content: roundScore(scores.content, fallback.content),
+    delivery: roundScore(scores.delivery, fallback.delivery),
+    body_language: roundScore(scores.body_language, fallback.body_language),
+    engagement: roundScore(scores.engagement, fallback.engagement),
+    document_handling: roundScore(scores.document_handling, fallback.document_handling),
+  };
+}
+
+function sanitizeTimeAnalysis(timeAnalysis, fallback) {
+  if (!timeAnalysis || typeof timeAnalysis !== "object") return fallback;
+
+  const totalDuration = String(timeAnalysis.total_duration || "").trim();
+  const avgPerPage = String(timeAnalysis.avg_per_page || "").trim();
+  const recommendation = String(timeAnalysis.recommendation || "").trim();
+  const pageAssessments = (Array.isArray(timeAnalysis.page_assessments) ? timeAnalysis.page_assessments : [])
+    .map((item, index) => {
+      const page = Number(item?.page);
+      const timeSpent = String(item?.time_spent || "").trim();
+      const assessment = String(item?.assessment || "").trim();
+      if (!timeSpent || !assessment) return null;
+      return {
+        page: Number.isFinite(page) ? page : index + 1,
+        time_spent: timeSpent,
+        assessment,
+      };
+    })
+    .filter(Boolean);
+
+  if (!totalDuration || !avgPerPage || !recommendation) {
+    return fallback;
   }
+
+  return {
+    total_duration: totalDuration,
+    avg_per_page: avgPerPage,
+    recommendation,
+    page_assessments: pageAssessments,
+  };
+}
+
+function sanitizeFeedback(feedback, fallback) {
+  if (!feedback || typeof feedback !== "object") return fallback;
+
+  const sections = ["content", "delivery"];
+  const normalized = {};
+
+  for (const section of sections) {
+    const strengths = String(feedback?.[section]?.strengths || "").trim();
+    const improvements = String(feedback?.[section]?.improvements || "").trim();
+    normalized[section] = {
+      strengths: strengths || fallback[section].strengths,
+      improvements: improvements || fallback[section].improvements,
+    };
+  }
+
+  return normalized;
+}
+
+function sanitizeReportBasis(reportBasis) {
+  if (!reportBasis || typeof reportBasis !== "object") return null;
+
+  const dominantPageType = String(reportBasis.dominant_page_type || "").trim();
+  const evidenceTerms = sanitizeStringList(reportBasis.evidence_terms, 6);
+  const transcriptSignal = String(reportBasis.transcript_signal || "").trim();
+
+  if (!dominantPageType || !evidenceTerms.length || !transcriptSignal) {
+    return null;
+  }
+
+  return {
+    dominant_page_type: dominantPageType,
+    evidence_terms: evidenceTerms,
+    transcript_signal: transcriptSignal,
+  };
+}
+
+function sanitizePdfSummary(pdfSummary, fallback) {
+  if (!pdfSummary || typeof pdfSummary !== "object") return fallback;
+
+  return {
+    fileName: String(pdfSummary.fileName || "").trim() || fallback.fileName,
+    overlap: Number.isFinite(Number(pdfSummary.overlap)) ? Number(pdfSummary.overlap) : fallback.overlap,
+    trackedKeywords: sanitizeStringList(pdfSummary.trackedKeywords, 8),
+    transcriptKeywords: sanitizeStringList(pdfSummary.transcriptKeywords, 8),
+    coverageLabel: String(pdfSummary.coverageLabel || "").trim() || fallback.coverageLabel,
+  };
+}
+
+function normalizeReportShape(parsed, fallback) {
+  if (!parsed || typeof parsed !== "object") return { ...fallback, source: "fallback" };
+
+  const reportBasis = sanitizeReportBasis(parsed.report_basis || {
+    dominant_page_type: parsed.dominant_page_type,
+    evidence_terms: parsed.evidence_terms,
+    transcript_signal: parsed.transcript_signal,
+  });
+  const keyTakeaways = sanitizeStringList(parsed.key_takeaways, 3);
+  const suggestions = sanitizeStringList(parsed.suggestions, 3);
+
+  if (!reportBasis || !keyTakeaways.length || !suggestions.length) {
+    return { ...fallback, source: "fallback" };
+  }
+
+  const recommendation = String(parsed.recommendation || "").trim();
+  const scores = sanitizeScores(parsed.scores, fallback.scores);
+  const feedback = sanitizeFeedback(parsed.feedback, fallback.feedback);
+  const timeAnalysis = sanitizeTimeAnalysis(
+    parsed.time_analysis || {
+      total_duration: fallback.time_analysis.total_duration,
+      avg_per_page: fallback.time_analysis.avg_per_page,
+      recommendation: recommendation || fallback.time_analysis.recommendation,
+      page_assessments: [],
+    },
+    fallback.time_analysis
+  );
+  const pdfSummary = sanitizePdfSummary(
+    parsed.pdf_summary || {
+      fileName: fallback.pdf_summary.fileName,
+      overlap: fallback.pdf_summary.overlap,
+      trackedKeywords: reportBasis.evidence_terms,
+      transcriptKeywords: reportBasis.evidence_terms.slice(0, 3),
+      coverageLabel: fallback.pdf_summary.coverageLabel,
+    },
+    fallback.pdf_summary
+  );
+
+  return {
+    source: "ai",
+    overall_score: roundScore(parsed.overall_score, fallback.overall_score),
+    scores,
+    time_analysis: timeAnalysis,
+    feedback,
+    report_basis: reportBasis,
+    key_takeaways: keyTakeaways,
+    suggestions,
+    pdf_summary: pdfSummary,
+  };
+}
+
+function buildFastReportPayload(payload) {
+  const pageTexts = Array.isArray(payload?.pageTexts) ? payload.pageTexts : [];
+  const pagePreview = pageTexts
+    .slice(0, 3)
+    .map((text, index) => `P${index + 1}: ${String(text || "").replace(/\s+/g, " ").slice(0, 100)}`)
+    .join("\n");
+  const transcriptPreview = String(payload?.transcript || "").replace(/\s+/g, " ").slice(0, 220);
+  const pageTimingPreview = JSON.stringify((payload?.pageTimings || []).slice(0, 5));
+
+  return [
+    `File: ${payload?.fileName || "presentation"}`,
+    `Duration: ${payload?.duration || 0}s`,
+    `Total pages: ${payload?.totalPages || 1}`,
+    `Page timings: ${pageTimingPreview}`,
+    `Transcript: ${transcriptPreview || "(empty)"}`,
+    `Page previews:\n${pagePreview || "(none)"}`,
+  ].join("\n");
 }
 
 export default async function handler(req, res) {
@@ -66,51 +234,42 @@ export default async function handler(req, res) {
     return;
   }
 
-  const apiKey = process.env.OPENAI_API_KEY;
   const payload = req.body || {};
-
-  if (!apiKey) {
-    res.status(200).json(fallbackReport(payload));
-    return;
-  }
+  const fallback = fallbackReport(payload);
 
   try {
-    const response = await fetch("https://api.openai.com/v1/responses", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
+    const { provider, model, parsed } = await requestStructuredLlm({
+      schemaName: "presentation_report",
+      schema: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          overall_score: { type: "number" },
+          dominant_page_type: { type: "string" },
+          evidence_terms: { type: "array", items: { type: "string" } },
+          transcript_signal: { type: "string" },
+          recommendation: { type: "string" },
+          key_takeaways: { type: "array", items: { type: "string" } },
+          suggestions: { type: "array", items: { type: "string" } },
+        },
+        required: ["overall_score", "dominant_page_type", "evidence_terms", "transcript_signal", "recommendation", "key_takeaways", "suggestions"],
       },
-      body: JSON.stringify({
-        model: "gpt-5.4-mini",
-        input: [
-          {
-            role: "system",
-            content: [{
-              type: "input_text",
-              text: "You are a presentation coach. Return strict JSON only with shape {\"overall_score\":0,\"scores\":{\"content\":0,\"delivery\":0,\"body_language\":0,\"engagement\":0,\"document_handling\":0},\"time_analysis\":{\"total_duration\":\"...\",\"avg_per_page\":\"...\",\"recommendation\":\"...\",\"page_assessments\":[]},\"feedback\":{\"content\":{\"strengths\":\"...\",\"improvements\":\"...\"},\"delivery\":{\"strengths\":\"...\",\"improvements\":\"...\"}},\"key_takeaways\":[\"...\",\"...\",\"...\"],\"suggestions\":[\"...\",\"...\",\"...\"],\"pdf_summary\":{\"fileName\":\"...\",\"overlap\":0,\"trackedKeywords\":[],\"transcriptKeywords\":[],\"coverageLabel\":\"...\"}}. Requirements: use the uploaded PDF text, transcript, and pacing to infer what kinds of pages the user practiced most, such as chart pages, list pages, concept pages, or conclusion pages; make suggestions specific to those page types; keep it practical, concise, and student-friendly; avoid generic praise.",
-            }],
-          },
-          {
-            role: "user",
-            content: [{
-              type: "input_text",
-              text: JSON.stringify(payload).slice(0, 14000),
-            }],
-          },
-        ],
-      }),
+      timeoutMs: 12000,
+      retryOnce: true,
+      systemText: "You are a presentation coach. Return strict JSON only. Keep fields short. Required keys only: overall_score, dominant_page_type, evidence_terms, transcript_signal, recommendation, key_takeaways, suggestions. Reuse concrete words from the transcript or page previews. Avoid generic praise.",
+      userText: buildFastReportPayload(payload),
     });
-
-    if (!response.ok) {
-      throw new Error(`OpenAI error ${response.status}`);
-    }
-
-    const data = await response.json();
-    const parsed = safeJsonParse(data.output_text || "");
-    res.status(200).json(parsed ? { source: "ai", ...parsed } : fallbackReport(payload));
+    const normalized = normalizeReportShape(parsed, fallback);
+    res.status(200).json(
+      normalized.source === "ai"
+        ? { ...normalized, provider, model }
+        : normalized
+    );
   } catch (error) {
     console.error("presentation-report api error:", error);
-    res.status(200).json(fallbackReport(payload));
+    res.status(200).json({
+      ...fallback,
+      fallback_reason: error?.message || "request_failed",
+    });
   }
 }

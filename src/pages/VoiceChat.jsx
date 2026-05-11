@@ -4,7 +4,8 @@ import { ArrowLeft, Mic, Volume2 } from "lucide-react";
 import { localApi } from "@/api/localClient";
 import { getScenario } from "@/lib/scenarios";
 import { audioManager } from "@/lib/audioManager";
-import { getDynamicSceneCue } from "@/lib/sceneAssets";
+import { getDynamicSceneCue, getSceneAsset } from "@/lib/sceneAssets";
+import CharacterFigure from "@/components/CharacterFigure";
 import ChatMessage from "@/components/voice/ChatMessage";
 import RecordingControls from "@/components/voice/RecordingControls";
 import { toast } from "sonner";
@@ -45,11 +46,14 @@ export default function VoiceChat() {
   const scenario = getScenario(scenarioId);
   const isGoalOriented = dialogMode === "goal_oriented";
   const scenarioData = isGoalOriented ? scenario?.goalOriented : scenario?.freeTalk;
+  const examinerScene = getSceneAsset(scenarioId)?.fallback || null;
 
   const [messages, setMessages] = useState([]);
   const [isAiThinking, setIsAiThinking] = useState(false);
   const [activePlaybackId, setActivePlaybackId] = useState(null);
   const [hasUserSpoken, setHasUserSpoken] = useState(false);
+  const [fallbackNotice, setFallbackNotice] = useState("");
+  const [autoPlayIntroPending, setAutoPlayIntroPending] = useState(true);
   const [startTime] = useState(Date.now());
   const chatEndRef = useRef(null);
   const messageRefs = useRef({});
@@ -76,6 +80,8 @@ export default function VoiceChat() {
       mode,
       dialog_mode: dialogMode,
       scoring_standard: scoring,
+    }).catch((error) => {
+      console.error("Failed to track voice practice start:", error);
     });
     
     const initMessage = {
@@ -88,30 +94,34 @@ export default function VoiceChat() {
     };
     setMessages([initMessage]);
     
-    // Play first message audio
-    setTimeout(() => {
-      audioManager.playAIVoice(scenarioData.firstMessage, scenario.aiVoice, {
-        concise: true,
-        maxSentences: 2,
-        maxChars: 180,
-        playbackId: initMessage.id,
-      });
-    }, 500);
+    setAutoPlayIntroPending(true);
   }, [dialogMode, mode, scenario, scenarioData, scenarioId, scoring]);
 
   useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    chatEndRef.current?.scrollIntoView({ behavior: "auto" });
   }, [messages]);
+
+  useEffect(() => {
+    if (!autoPlayIntroPending || !messages.length) return;
+    const firstAiMessage = messages[0];
+    if (!firstAiMessage || firstAiMessage.role !== "ai") return;
+
+    const timer = window.setTimeout(() => {
+      void audioManager.playAIVoice(firstAiMessage.content, scenario.aiVoice, {
+        concise: true,
+        maxSentences: 2,
+        maxChars: 180,
+        playbackId: firstAiMessage.id,
+      });
+      setAutoPlayIntroPending(false);
+    }, 250);
+
+    return () => window.clearTimeout(timer);
+  }, [autoPlayIntroPending, messages, scenario?.aiVoice]);
 
   useEffect(() => {
     audioManager.onPlaybackMetaChange = (playbackId) => {
       setActivePlaybackId(playbackId);
-      if (playbackId && messageRefs.current[playbackId]) {
-        messageRefs.current[playbackId].scrollIntoView({
-          behavior: "smooth",
-          block: "center",
-        });
-      }
     };
 
     return () => {
@@ -164,9 +174,17 @@ export default function VoiceChat() {
           isGoalOriented,
         },
       });
+      if (result?.source === "fallback" || result?.fallback_reason) {
+        const nextReason = String(result?.fallback_reason || "unknown_fallback").slice(0, 220);
+        setFallbackNotice(nextReason);
+        toast.warning(`AI fallback reply: ${nextReason}`);
+      } else {
+        setFallbackNotice("");
+      }
     } catch (error) {
       console.error("Failed to generate AI reply:", error);
       toast.error("Reply generation failed once. Using a fallback reply.");
+      setFallbackNotice(error?.message || "request_failed");
       result = null;
     } finally {
       // Update user message with feedback without relying on findLastIndex for browser compatibility.
@@ -209,6 +227,9 @@ export default function VoiceChat() {
             playbackId: nextPlaybackId,
             role: "ai",
             content: replyText,
+            source: result?.source || "fallback",
+            model: result?.model || null,
+            fallbackReason: result?.fallback_reason || null,
             aiRole: scenario.aiRole,
             visual,
             time: aiTime,
@@ -216,12 +237,6 @@ export default function VoiceChat() {
         ];
         messagesRef.current = nextMessages;
         return nextMessages;
-      });
-      void audioManager.playAIVoice(replyText, scenario.aiVoice, {
-        concise: true,
-        maxSentences: 2,
-        maxChars: 180,
-        playbackId: nextPlaybackId,
       });
       setIsAiThinking(false);
     }
@@ -242,6 +257,18 @@ export default function VoiceChat() {
     
     // Store messages in sessionStorage for report
     sessionStorage.setItem("voiceMessages", JSON.stringify(messagesRef.current));
+    sessionStorage.setItem(
+      "voiceReportContext",
+      JSON.stringify({
+        scenario: scenarioId,
+        mode,
+        dialogMode,
+        scoring,
+        duration,
+        words: sessionDataRef.current.wordCount,
+        exchanges: sessionDataRef.current.exchanges,
+      })
+    );
     navigate(`/voice/report?${endParams.toString()}`);
   };
 
@@ -272,6 +299,30 @@ export default function VoiceChat() {
 
       {/* Chat Area */}
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+        {isGoalOriented && examinerScene && (
+          <div className="flex justify-center">
+            <div className="w-full max-w-sm overflow-hidden rounded-[28px] border border-white/10 bg-[radial-gradient(circle_at_top_left,rgba(34,211,238,0.12),transparent_26%),linear-gradient(180deg,rgba(255,255,255,0.06),rgba(15,23,42,0.32))] px-5 py-6 shadow-[0_24px_80px_rgba(0,0,0,0.32)]">
+              <div className="text-center">
+                <p className="text-[11px] uppercase tracking-[0.28em] text-cyan-200/75">Virtual Examiner</p>
+                <div className="mt-5 flex justify-center">
+                  <CharacterFigure
+                    fallback={String(scenario.aiRole || "E").slice(0, 1)}
+                    size="large"
+                    accent="cyan"
+                    label={scenario.aiRole}
+                    subtitle={scenarioData?.context || examinerScene.tip}
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+        {fallbackNotice && (
+          <div className="glass rounded-2xl border border-amber-400/30 bg-amber-500/10 px-4 py-3">
+            <p className="text-xs font-medium text-amber-200">AI fallback mode</p>
+            <p className="mt-1 text-xs text-amber-100/90 break-words">{fallbackNotice}</p>
+          </div>
+        )}
         {messages.map((msg, i) => (
           <ChatMessage
             key={msg.id || i}

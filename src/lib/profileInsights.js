@@ -28,10 +28,23 @@ function flattenVoiceScores(voiceSessions) {
   });
 }
 
+function flattenPresentationScores(presentationSessions) {
+  return presentationSessions.flatMap((session) => {
+    const scores = session.report?.scores || {};
+    return Object.entries(scores).map(([name, value]) => ({
+      name: `presentation_${name}`,
+      value: Number(value) || 0,
+    }));
+  });
+}
+
 export function buildProfileInsights({ voiceSessions, presentationSessions, activityRecords = [] }) {
   const totalSessions = voiceSessions.length + presentationSessions.length;
-  const allVoiceScores = flattenVoiceScores(voiceSessions);
-  const byMetric = allVoiceScores.reduce((acc, item) => {
+  const allScores = [
+    ...flattenVoiceScores(voiceSessions),
+    ...flattenPresentationScores(presentationSessions),
+  ];
+  const byMetric = allScores.reduce((acc, item) => {
     if (!acc[item.name]) acc[item.name] = [];
     acc[item.name].push(item.value);
     return acc;
@@ -44,9 +57,12 @@ export function buildProfileInsights({ voiceSessions, presentationSessions, acti
   const strongestMetric = metricAverages[0];
   const weakestMetric = metricAverages[metricAverages.length - 1];
   const recentVoice = voiceSessions.slice(0, 5);
+  const recentPresentation = presentationSessions.slice(0, 5);
   const recentAverage = average(
-    recentVoice
-      .map((session) => Number(session.report?.totalScore) || 0)
+    [
+      ...recentVoice.map((session) => Number(session.report?.totalScore) || 0),
+      ...recentPresentation.map((session) => Number(session.report?.overall_score) || 0),
+    ]
       .filter(Boolean)
   );
 
@@ -60,6 +76,7 @@ export function buildProfileInsights({ voiceSessions, presentationSessions, acti
 
   const focusMode = mostFrequent(voiceSessions.map((session) => session.mode));
   const frequentScenario = mostFrequent(voiceSessions.map((session) => session.scenario));
+  const frequentPresentation = mostFrequent(presentationSessions.map((session) => session.file_name));
   const averageWords = average(
     voiceSessions.map((session) => Number(session.words_spoken) || 0).filter(Boolean)
   );
@@ -87,9 +104,9 @@ export function buildProfileInsights({ voiceSessions, presentationSessions, acti
     totalActivities,
     latestActivity: latestActivity || "Not enough data",
     recentAverage: formatScore(recentAverage),
-    strongestMetric: strongestMetric?.name || "Not enough data",
-    weakestMetric: weakestMetric?.name || "Not enough data",
-    frequentScenario: frequentScenario || "Not enough data",
+    strongestMetric: strongestMetric?.name?.replace(/^presentation_/, "") || "Not enough data",
+    weakestMetric: weakestMetric?.name?.replace(/^presentation_/, "") || "Not enough data",
+    frequentScenario: frequentScenario || frequentPresentation || "Not enough data",
     focusMode: focusMode || "Not enough data",
     averageWords: Math.round(averageWords || 0),
     averageDurationMinutes: averageDuration ? (averageDuration / 60).toFixed(1) : "0.0",

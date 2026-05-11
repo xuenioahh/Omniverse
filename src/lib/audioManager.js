@@ -7,6 +7,7 @@ class StableAudioManager {
     this.onSpeakingChange = null;
     this.currentPlaybackId = null;
     this.onPlaybackMetaChange = null;
+    this._playRequestId = 0;
     this._voicesReady = false;
     this._voicesLoadedCallbacks = [];
 
@@ -24,6 +25,68 @@ class StableAudioManager {
         }, { once: true });
       }
     }
+  }
+
+  _pickVoice(voices, voiceGender) {
+    const normalizedGender = voiceGender === "male" ? "male" : "female";
+    const englishVoices = (voices || []).filter((voice) => String(voice.lang || "").toLowerCase().startsWith("en"));
+    const genderHints = normalizedGender === "female"
+      ? ["female", "samantha", "ava", "victoria", "zira", "karen", "moira"]
+      : ["male", "daniel", "alex", "fred", "thomas", "jorge"];
+
+    return englishVoices.find((voice) => {
+      const name = String(voice.name || "").toLowerCase();
+      return genderHints.some((hint) => name.includes(hint));
+    }) || englishVoices[0] || voices?.[0] || null;
+  }
+
+  _speakUtterance(utterance) {
+    return new Promise((resolve) => {
+      let finished = false;
+      let startTimer = null;
+
+      const cleanup = () => {
+        if (startTimer) {
+          window.clearTimeout(startTimer);
+          startTimer = null;
+        }
+      };
+
+      const done = (ok) => {
+        if (finished) return;
+        finished = true;
+        cleanup();
+        resolve(ok);
+      };
+
+      utterance.onstart = () => {
+        this.isPlaying = true;
+        this.onSpeakingChange?.(true);
+      };
+      utterance.onend = () => {
+        this.isPlaying = false;
+        this.currentPlaybackId = null;
+        this.onSpeakingChange?.(false);
+        this.onPlaybackMetaChange?.(null);
+        done(true);
+      };
+      utterance.onerror = (error) => {
+        console.error("TTS error:", error);
+        this.isPlaying = false;
+        this.currentPlaybackId = null;
+        this.onSpeakingChange?.(false);
+        this.onPlaybackMetaChange?.(null);
+        done(false);
+      };
+
+      startTimer = window.setTimeout(() => {
+        if (!this.isPlaying) {
+          done(false);
+        }
+      }, 1200);
+
+      window.speechSynthesis.speak(utterance);
+    });
   }
 
   isSupported() {
@@ -72,62 +135,106 @@ class StableAudioManager {
     return condensed || normalized.slice(0, maxChars).trimEnd();
   }
 
+  _chunkSpeechText(text, maxChunkChars = 90) {
+    const normalized = String(text || "").replace(/\s+/g, " ").trim();
+    if (!normalized) return [];
+
+    const sentences = normalized.match(/[^.!?]+[.!?]?/g) || [normalized];
+    const chunks = [];
+    let current = "";
+
+    for (const rawSentence of sentences) {
+      const sentence = rawSentence.trim();
+      if (!sentence) continue;
+
+      if (!current) {
+        current = sentence;
+        continue;
+      }
+
+      if (`${current} ${sentence}`.length <= maxChunkChars) {
+        current = `${current} ${sentence}`;
+      } else {
+        chunks.push(current);
+        current = sentence;
+      }
+    }
+
+    if (current) {
+      chunks.push(current);
+    }
+
+    return chunks;
+  }
+
   async playAIVoice(text, voiceGender = 'female', options = {}) {
-    return new Promise(async (resolve) => {
-      const speechText = this._condenseText(text, options);
-      if (!this.isSupported() || !speechText) { resolve(false); return; }
+    const speechText = this._condenseText(text, options);
+    if (!this.isSupported() || !speechText) return false;
 
-      const playbackId = options.playbackId || null;
-      this.currentPlaybackId = playbackId;
-      this.onPlaybackMetaChange?.(playbackId);
+    this._playRequestId += 1;
+    const requestId = this._playRequestId;
+    const playbackId = options.playbackId || null;
+    this.currentPlaybackId = playbackId;
+    this.onPlaybackMetaChange?.(playbackId);
 
-      // Cancel any ongoing speech first
-      window.speechSynthesis.cancel();
+    try {
+      if (window.speechSynthesis.speaking || window.speechSynthesis.pending) {
+        window.speechSynthesis.cancel();
+      }
+      window.speechSynthesis.resume();
+    } catch {
+      // ignore browser-specific speech state errors
+    }
 
-      const utterance = new SpeechSynthesisUtterance(speechText);
+    const voices = await this._getVoices();
+    if (requestId !== this._playRequestId) return false;
+    const preferredVoice = this._pickVoice(voices, voiceGender);
+    const chunks = this._chunkSpeechText(speechText, options.chunkChars || 90);
+
+    const attemptSpeakChunk = async (chunkText, voice = preferredVoice) => {
+      const utterance = new SpeechSynthesisUtterance(chunkText);
       utterance.lang = 'en-US';
-      utterance.rate = 0.95;
-      utterance.pitch = voiceGender === 'female' ? 1.1 : 0.9;
+      utterance.rate = options.rate || 1;
+      utterance.pitch = voiceGender === 'female' ? 1.05 : 0.95;
+      if (voice) utterance.voice = voice;
 
-      const voices = await this._getVoices();
-      const preferred = voices.find(v =>
-        v.lang.startsWith('en') &&
-        v.name.toLowerCase().includes(voiceGender === 'female' ? 'female' : 'male')
-      ) || voices.find(v => v.lang.startsWith('en'));
-      if (preferred) utterance.voice = preferred;
+      await new Promise((resolve) => window.setTimeout(resolve, 30));
+      try {
+        window.speechSynthesis.resume();
+      } catch {
+        // ignore
+      }
+      return this._speakUtterance(utterance);
+    };
 
-      let resolved = false;
-      const done = () => {
-        if (resolved) return;
-        resolved = true;
-        this.isPlaying = false;
-        this.currentPlaybackId = null;
-        this.onSpeakingChange?.(false);
-        this.onPlaybackMetaChange?.(null);
-        resolve(true);
-      };
+    const speakChunks = async (voice = preferredVoice) => {
+      for (const chunk of chunks) {
+        if (requestId !== this._playRequestId) return false;
+        const ok = await attemptSpeakChunk(chunk, voice);
+        if (!ok) return false;
+        await new Promise((resolve) => window.setTimeout(resolve, 10));
+      }
+      return true;
+    };
 
-      utterance.onstart = () => {
-        this.isPlaying = true;
-        this.onSpeakingChange?.(true);
-      };
-      utterance.onend = done;
-      utterance.onerror = (e) => {
-        console.error('TTS error:', e);
-        if (resolved) return;
-        resolved = true;
-        this.isPlaying = false;
-        this.currentPlaybackId = null;
-        this.onSpeakingChange?.(false);
-        this.onPlaybackMetaChange?.(null);
-        resolve(false);
-      };
+    let ok = await speakChunks(preferredVoice);
+    if (!ok && requestId === this._playRequestId) {
+      try {
+        if (window.speechSynthesis.speaking || window.speechSynthesis.pending) {
+          window.speechSynthesis.cancel();
+        }
+        window.speechSynthesis.resume();
+      } catch {
+        // ignore
+      }
+      ok = await speakChunks(null);
+    }
 
-      window.speechSynthesis.speak(utterance);
-    });
+    return ok;
   }
 
   stop() {
+    this._playRequestId += 1;
     window.speechSynthesis?.cancel();
     this.isPlaying = false;
     this.currentPlaybackId = null;

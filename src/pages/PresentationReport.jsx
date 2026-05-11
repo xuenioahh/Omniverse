@@ -1,11 +1,12 @@
 import { useState, useEffect, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
-import { ArrowLeft, Save, Home, CheckCircle, Loader2, ExternalLink, Volume2, ChevronDown, ChevronUp } from "lucide-react";
+import { ArrowLeft, Save, Home, CheckCircle, Loader2, ExternalLink, Volume2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { localApi } from "@/api/localClient";
 import { audioManager } from "@/lib/audioManager";
 import { toast } from "sonner";
+import LoadingProgressCard from "@/components/LoadingProgressCard";
 
 const TED_TALKS = [
   {
@@ -38,67 +39,50 @@ const TED_TALKS = [
   },
 ];
 
-export default function PresentationReport() {
-  const navigate = useNavigate();
-  const [report, setReport] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [saved, setSaved] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [audioFailed, setAudioFailed] = useState(false);
-  const [errorMessage, setErrorMessage] = useState("");
-  const [showResources, setShowResources] = useState(false);
+function clampPresentationScore(value, fallback = null) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return fallback;
+  }
+  return Math.max(0, Math.min(10, numeric));
+}
 
-  const fileName = sessionStorage.getItem("presentationFile");
-  const duration = parseInt(sessionStorage.getItem("presentationDuration") || "0");
-  const totalPages = parseInt(sessionStorage.getItem("presentationTotalPages") || "1");
-  const pageTimings = JSON.parse(sessionStorage.getItem("presentationPageTimings") || "[]");
-  const transcript = sessionStorage.getItem("presentationTranscriptCombined") || "";
-  const pageTexts = JSON.parse(sessionStorage.getItem("presentationPdfPageTexts") || "[]");
-  const pauseHistory = JSON.parse(sessionStorage.getItem("presentationPauseHistory") || "[]");
-  const hasCompletedSession =
-    duration > 0 ||
-    pageTimings.some((value) => Number(value) > 0) ||
-    transcript.trim().length > 0 ||
-    pauseHistory.length > 0;
+function normalizeOverallScore(rawReport) {
+  if (!rawReport) return rawReport;
 
-  const durationStr = `${Math.floor(duration / 60)}m ${duration % 60}s`;
-
-  useEffect(() => {
-    if (!fileName || !hasCompletedSession) {
-      navigate("/presentation");
-      return;
-    }
-    void generateReport();
-  }, [fileName, hasCompletedSession, navigate]);
-
-  const spokenFocus = useMemo(() => {
-    if (!report) return "";
-
-    const parts = [
-      `Presentation report. Overall score ${report.overall_score} out of 10.`,
-      report.key_takeaways?.[0] || "",
-      report.key_takeaways?.[1] || "",
-      report.feedback?.pdf_alignment?.improvements || "",
-      report.feedback?.content?.improvements || "",
-      report.suggestions?.[0] || "",
-    ];
-
-    return parts.filter(Boolean).join(" ");
-  }, [report]);
-
-  useEffect(() => {
-    if (!spokenFocus) return undefined;
-
-    audioManager.playAIVoice(spokenFocus, "female").then((ok) => {
-      setAudioFailed(!ok);
-    });
-
-    return () => {
-      audioManager.stop();
+  const existing = clampPresentationScore(rawReport.overall_score);
+  if (Number.isFinite(existing)) {
+    return {
+      ...rawReport,
+      overall_score: Math.round(existing * 10) / 10,
     };
-  }, [spokenFocus]);
+  }
 
-  const buildFallbackReport = () => ({
+  const scoreValues = Object.values(rawReport.scores || {})
+    .map((value) => Number(value))
+    .filter((value) => Number.isFinite(value));
+
+  if (!scoreValues.length) {
+    return rawReport;
+  }
+
+  return {
+    ...rawReport,
+    overall_score: Math.round((scoreValues.reduce((sum, value) => sum + value, 0) / scoreValues.length) * 10) / 10,
+  };
+}
+
+function resolveOverallScore(report, fallback = null) {
+  const normalized = normalizeOverallScore(report);
+  const direct = clampPresentationScore(normalized?.overall_score, fallback);
+  if (Number.isFinite(direct)) {
+    return Math.round(direct * 10) / 10;
+  }
+  return fallback;
+}
+
+function buildFallbackReport({ durationStr, duration, totalPages, fileName }) {
+  return {
     overall_score: 7.0,
     scores: {
       content: 7.0,
@@ -140,7 +124,81 @@ export default function PresentationReport() {
       transcriptKeywords: [],
       coverageLabel: "Unavailable",
     },
-  });
+  };
+}
+
+export default function PresentationReport() {
+  const navigate = useNavigate();
+  const [report, setReport] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [saved, setSaved] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [audioFailed, setAudioFailed] = useState(false);
+  const [errorMessage, setErrorMessage] = useState("");
+  const [fallbackReason, setFallbackReason] = useState("");
+
+  const fileName = sessionStorage.getItem("presentationFile");
+  const duration = parseInt(sessionStorage.getItem("presentationDuration") || "0");
+  const totalPages = parseInt(sessionStorage.getItem("presentationTotalPages") || "1");
+  const pageTimings = JSON.parse(sessionStorage.getItem("presentationPageTimings") || "[]");
+  const transcript = sessionStorage.getItem("presentationTranscriptCombined") || "";
+  const pageTexts = JSON.parse(sessionStorage.getItem("presentationPdfPageTexts") || "[]");
+  const pauseHistory = JSON.parse(sessionStorage.getItem("presentationPauseHistory") || "[]");
+  const hasCompletedSession =
+    duration > 0 ||
+    pageTimings.some((value) => Number(value) > 0) ||
+    transcript.trim().length > 0 ||
+    pauseHistory.length > 0;
+
+  const durationStr = `${Math.floor(duration / 60)}m ${duration % 60}s`;
+  const fallbackReportForView = useMemo(
+    () => buildFallbackReport({ durationStr, duration, totalPages, fileName }),
+    [durationStr, duration, totalPages, fileName]
+  );
+  const normalizedReport = useMemo(() => normalizeOverallScore(report || fallbackReportForView), [report, fallbackReportForView]);
+  const computedOverallScore = useMemo(() => {
+    const resolved = resolveOverallScore(normalizedReport);
+    if (!Number.isFinite(Number(resolved))) {
+      return "-";
+    }
+
+    return Number(resolved).toFixed(1).replace(/\.0$/, "");
+  }, [normalizedReport]);
+
+  useEffect(() => {
+    if (!fileName || !hasCompletedSession) {
+      navigate("/presentation");
+      return;
+    }
+    void generateReport();
+  }, [fileName, hasCompletedSession, navigate]);
+
+  const spokenFocus = useMemo(() => {
+    const parts = [
+      Number.isFinite(Number(normalizedReport?.overall_score))
+        ? `Presentation report. Overall score ${normalizedReport.overall_score} out of 10.`
+        : "",
+      normalizedReport?.key_takeaways?.[0] || "",
+      normalizedReport?.key_takeaways?.[1] || "",
+      normalizedReport?.feedback?.pdf_alignment?.improvements || "",
+      normalizedReport?.feedback?.content?.improvements || "",
+      normalizedReport?.suggestions?.[0] || "",
+    ];
+
+    return parts.filter(Boolean).join(" ");
+  }, [normalizedReport]);
+
+  useEffect(() => {
+    if (!spokenFocus) return undefined;
+
+    audioManager.playAIVoice(spokenFocus, "female").then((ok) => {
+      setAudioFailed(!ok);
+    });
+
+    return () => {
+      audioManager.stop();
+    };
+  }, [spokenFocus]);
 
   const generateReport = async () => {
     try {
@@ -157,39 +215,47 @@ export default function PresentationReport() {
         },
       });
 
-      setReport(result || buildFallbackReport());
+      const normalizedReport = normalizeOverallScore(result || buildFallbackReport({ durationStr, duration, totalPages, fileName }));
+      setReport(normalizedReport);
+      setFallbackReason(normalizedReport?.fallback_reason || "");
       await localApi.integrations.Core.TrackActivity({
         activity_type: "presentation_report_generated",
         file_name: fileName,
         duration_seconds: duration,
         total_pages: totalPages,
         report_summary: {
-          overall_score: result?.overall_score || null,
-          scores: result?.scores || null,
+          overall_score: resolveOverallScore(normalizedReport, 7.0),
+          scores: normalizedReport?.scores || null,
         },
       });
       setErrorMessage("");
     } catch (error) {
       console.error("Failed to generate presentation report:", error);
-      setReport(buildFallbackReport());
+      setReport(normalizeOverallScore(buildFallbackReport({ durationStr, duration, totalPages, fileName })));
       setErrorMessage("The full summary could not be generated, so a fallback summary is shown instead.");
+      setFallbackReason(error?.message || "request_failed");
     } finally {
       setLoading(false);
     }
   };
 
   const handleSave = async () => {
-    setSaving(true);
-    await localApi.entities.PresentationSession.create({
-      file_name: fileName,
-      duration_seconds: duration,
-      total_pages: totalPages,
-      page_timings: pageTimings,
-      report,
-    });
-    setSaved(true);
-    setSaving(false);
-    toast.success("Report saved successfully!");
+    try {
+      setSaving(true);
+      await localApi.entities.PresentationSession.create({
+        file_name: fileName,
+        duration_seconds: duration,
+        total_pages: totalPages,
+        page_timings: pageTimings,
+        report,
+      });
+      setSaved(true);
+      toast.success("Report saved successfully!");
+    } catch (error) {
+      toast.error(error?.message || "Failed to save report.");
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleRead = async (text) => {
@@ -204,12 +270,17 @@ export default function PresentationReport() {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="text-center space-y-3">
-          <Loader2 className="w-8 h-8 animate-spin text-primary mx-auto" />
-          <p className="text-[15px] text-muted-foreground">Generating your report...</p>
-        </div>
-      </div>
+      <LoadingProgressCard
+        title="Generating presentation report"
+        description="Scoring the session, checking pacing, and writing feedback."
+        durationMs={9500}
+        steps={[
+          "Reading transcript and slide data",
+          "Calculating the detailed scores",
+          "Writing personalized feedback",
+          "Finalizing the report",
+        ]}
+      />
     );
   }
 
@@ -227,12 +298,20 @@ export default function PresentationReport() {
         {errorMessage && (
           <div className="glass rounded-2xl px-4 py-3">
             <p className="text-[13px] text-amber-200">{errorMessage}</p>
+            {fallbackReason && (
+              <p className="text-[12px] text-amber-100/80 mt-2 break-words">Reason: {fallbackReason}</p>
+            )}
           </div>
         )}
         <div className="px-1">
           <p className="text-[11px] text-muted-foreground">
             Source: {report?.source === "ai" ? "AI-generated" : "Fallback"}
           </p>
+          {report?.source === "ai" && (
+            <p className="text-[11px] text-emerald-200/80 mt-1 break-words">
+              Model: {report?.provider || "unknown"} / {report?.model || "unknown"}
+            </p>
+          )}
         </div>
         {audioFailed && (
           <p className="text-[13px] text-accent">Voice playback is unavailable right now in this browser.</p>
@@ -241,7 +320,7 @@ export default function PresentationReport() {
         {/* Overall Score */}
         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="glass rounded-2xl p-5 text-center">
           <h3 className="text-sm font-semibold mb-2">Overall score</h3>
-          <div className="text-5xl font-bold font-space text-primary">{report?.overall_score}</div>
+          <div className="text-5xl font-bold font-space text-primary">{computedOverallScore}</div>
           <p className="text-[14px] text-muted-foreground mt-1">out of 10</p>
         </motion.div>
 
@@ -267,6 +346,29 @@ export default function PresentationReport() {
                 </div>
               )}
             </div>
+          </motion.div>
+        )}
+
+        {report?.report_basis && (
+          <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.035 }} className="glass rounded-2xl p-4">
+            <h3 className="text-sm font-semibold">Why this report</h3>
+            <p className="text-[13px] text-muted-foreground mt-2">
+              Dominant page type: <span className="text-foreground">{report.report_basis.dominant_page_type || "-"}</span>
+            </p>
+            {Array.isArray(report.report_basis.evidence_terms) && report.report_basis.evidence_terms.length > 0 && (
+              <div className="flex flex-wrap gap-2 mt-3">
+                {report.report_basis.evidence_terms.slice(0, 6).map((term) => (
+                  <span key={term} className="rounded-full bg-white/8 px-3 py-1.5 text-[12px] text-foreground/85">
+                    {term}
+                  </span>
+                ))}
+              </div>
+            )}
+            {report.report_basis.transcript_signal && (
+              <p className="text-[13px] text-muted-foreground mt-3 leading-relaxed">
+                Transcript signal: {report.report_basis.transcript_signal}
+              </p>
+            )}
           </motion.div>
         )}
 
@@ -398,25 +500,18 @@ export default function PresentationReport() {
         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }} className="glass rounded-2xl p-4">
             <h3 className="text-sm font-semibold mb-3">Next rehearsal plan</h3>
             <div className="space-y-2 mb-4">
-              {report.suggestions?.slice(0, 3).map((s, i) => (
+              {normalizedReport.suggestions?.slice(0, 3).map((s, i) => (
                 <div key={i} className="glass rounded-xl px-3 py-2 flex gap-2">
                   <span className="text-primary font-semibold text-sm">{i + 1}.</span>
                   <p className="text-sm text-muted-foreground">{s}</p>
                 </div>
               ))}
             </div>
-            <button
-              type="button"
-              onClick={() => setShowResources((value) => !value)}
-              className="w-full flex items-center justify-between text-left border-t border-white/8 pt-4"
-            >
+            <div className="border-t border-white/8 pt-4">
               <div>
-                <h3 className="text-sm font-semibold">Extra resources</h3>
-                <p className="text-[13px] text-muted-foreground mt-1">Open this only if you want outside examples after reviewing your own report.</p>
+                <h3 className="text-sm font-semibold">Extra TED</h3>
+                <p className="text-[13px] text-muted-foreground mt-1">Outside examples you can watch immediately after this report.</p>
               </div>
-              {showResources ? <ChevronUp className="w-4 h-4 text-muted-foreground" /> : <ChevronDown className="w-4 h-4 text-muted-foreground" />}
-            </button>
-            {showResources && (
               <div className="grid grid-cols-2 gap-3 mt-4">
                 {TED_TALKS.map((talk, i) => (
                   <a
@@ -444,7 +539,7 @@ export default function PresentationReport() {
                   </a>
                 ))}
               </div>
-            )}
+            </div>
         </motion.div>
 
         {/* Save Status */}

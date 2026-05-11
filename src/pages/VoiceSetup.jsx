@@ -2,9 +2,9 @@ import { useEffect } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { ArrowLeft, Mic, User, Bot, BookOpen, MessageSquare, Volume2 } from "lucide-react";
-import { Button } from "@/components/ui/button";
 import { getScenario } from "@/lib/scenarios";
 import { audioManager } from "@/lib/audioManager";
+import GlowCTAButton from "@/components/GlowCTAButton";
 
 export default function VoiceSetup() {
   const navigate = useNavigate();
@@ -235,13 +235,16 @@ export default function VoiceSetup() {
 
       {/* Start Button */}
       <div className="px-4 pb-6 pt-3">
-        <Button
+        <GlowCTAButton
           onClick={handleStart}
-          className="w-full h-14 rounded-2xl bg-gradient-to-r from-violet-500 to-indigo-600 hover:from-violet-600 hover:to-indigo-700 text-white font-semibold text-base glow-purple-strong"
+          className="h-14 w-full justify-between bg-gradient-to-r from-violet-500 via-indigo-500 to-blue-500 text-base font-semibold glow-purple-strong"
+          glowClassName="bg-gradient-to-r from-violet-300/18 via-white/8 to-cyan-300/16"
         >
-          <Mic className="w-5 h-5 mr-2" />
-          Start Conversation
-        </Button>
+          <span className="inline-flex items-center gap-2">
+            <Mic className="h-5 w-5" />
+            Start Conversation
+          </span>
+        </GlowCTAButton>
       </div>
     </div>
   );

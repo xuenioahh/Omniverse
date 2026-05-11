@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { ArrowLeft, Play, Volume2 } from "lucide-react";
 import { motion } from "framer-motion";
@@ -10,8 +10,9 @@ export default function PresentationFeedback() {
   const navigate = useNavigate();
   const [feedback, setFeedback] = useState(null);
   const [lastUpdatedAt, setLastUpdatedAt] = useState(null);
-  const [spokenSnapshot, setSpokenSnapshot] = useState(null);
   const [audioFailed, setAudioFailed] = useState(false);
+  const [fallbackReason, setFallbackReason] = useState("");
+  const spokenSnapshotRef = useRef(null);
 
   const speakText = async (text) => {
     if (!text) return;
@@ -49,6 +50,7 @@ export default function PresentationFeedback() {
       if (!mounted) return;
       lastSeenUpdatedAt = payload.updatedAt;
       setFeedback(result);
+      setFallbackReason(result?.fallback_reason || "");
       setLastUpdatedAt(payload.updatedAt || Date.now());
     };
 
@@ -64,7 +66,7 @@ export default function PresentationFeedback() {
   useEffect(() => {
     if (!feedback) return;
 
-    if (spokenSnapshot === lastUpdatedAt) return;
+    if (spokenSnapshotRef.current === lastUpdatedAt) return;
 
     const summary = [
       `Pause feedback. Score ${feedback.overallScore}.`,
@@ -76,13 +78,13 @@ export default function PresentationFeedback() {
 
     audioManager.playAIVoice(summary, "female").then((ok) => {
       setAudioFailed(!ok);
-      setSpokenSnapshot(lastUpdatedAt);
+      spokenSnapshotRef.current = lastUpdatedAt;
     });
 
     return () => {
       audioManager.stop();
     };
-  }, [feedback, lastUpdatedAt, spokenSnapshot]);
+  }, [feedback, lastUpdatedAt]);
 
   if (!feedback) {
     return (
@@ -113,6 +115,14 @@ export default function PresentationFeedback() {
         <p className="text-[11px] text-muted-foreground">
           Source: {feedback.source === "ai" ? "AI-generated" : "Fallback"}
         </p>
+        {feedback.source === "ai" && (
+          <p className="text-[11px] text-emerald-200/80 mt-1 break-words">
+            Model: {feedback.provider || "unknown"} / {feedback.model || "unknown"}
+          </p>
+        )}
+        {fallbackReason && (
+          <p className="text-[12px] text-amber-100/80 mt-2 break-words">Reason: {fallbackReason}</p>
+        )}
       </div>
 
       <div className="px-4 py-4 space-y-3">
@@ -174,19 +184,38 @@ export default function PresentationFeedback() {
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.12 }}
-            className="glass rounded-2xl p-4"
+            className="relative overflow-hidden rounded-[24px] border border-cyan-300/18 bg-gradient-to-br from-cyan-500/12 via-sky-500/8 to-transparent p-4"
           >
-            <div className="flex items-center justify-between gap-3">
-              <p className="text-[13px] uppercase tracking-[0.16em] text-muted-foreground">Page cue</p>
+            <div className="absolute right-[-10%] top-[-18%] h-24 w-24 rounded-full bg-cyan-300/12 blur-2xl" />
+            <div className="relative flex items-start justify-between gap-3">
+              <div>
+                <p className="text-[11px] uppercase tracking-[0.18em] text-cyan-200/70">Slide focus</p>
+                <h3 className="text-[16px] font-semibold text-foreground mt-2">What to highlight on this page</h3>
+              </div>
               <button
                 type="button"
                 onClick={() => speakText(feedback.pageContentPreview)}
-                className="text-[13px] text-primary"
+                className="inline-flex items-center gap-1.5 rounded-full border border-cyan-300/20 bg-white/6 px-3 py-1.5 text-[12px] text-cyan-100 hover:bg-white/10 transition-colors"
               >
+                <Volume2 className="w-3.5 h-3.5" />
                 Listen
               </button>
             </div>
-            <p className="text-[14px] text-foreground/90 mt-2 leading-relaxed line-clamp-4">{feedback.pageContentPreview}</p>
+            <div className="relative mt-4 rounded-2xl border border-white/8 bg-black/15 px-4 py-3">
+              <p className="text-[14px] leading-7 text-foreground/92">{feedback.pageContentPreview}</p>
+            </div>
+          </motion.div>
+        )}
+
+        {feedback.evidenceLine && (
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.14 }}
+            className="glass rounded-2xl p-4"
+          >
+            <p className="text-[13px] uppercase tracking-[0.16em] text-muted-foreground">Why this feedback</p>
+            <p className="text-[14px] text-foreground/90 mt-2 leading-relaxed">{feedback.evidenceLine}</p>
           </motion.div>
         )}
 

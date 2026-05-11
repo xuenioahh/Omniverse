@@ -39,12 +39,12 @@ This release is intended to present the project as a runnable, reviewable, and s
 
 Short version:
 
-`Local-first speaking practice web app for voice conversation rehearsal, presentation training, and progress reporting.`
+`Speaking-practice web app for scenario conversation, presentation rehearsal, reporting, and admin review.`
 
 Longer version:
 
-`Speaking practice platform built with React and Vite for scenario-based conversation, presentation rehearsal, and local-first progress tracking.`
+`Speaking-practice platform built with React and Vite for scenario-based conversation, presentation rehearsal, session reporting, and admin-side visibility.`
 
 ## Suggested Repository Description
 
-`A local-first speaking practice app built with React and Vite for conversation rehearsal, presentation training, and report generation.`
+`Speaking-practice web app built with React and Vite for scenario conversation, presentation rehearsal, reporting, and admin review.`

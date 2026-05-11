@@ -2,6 +2,7 @@ import { mutateAdminDb, readAdminDb } from "./_adminDb.js";
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const FORCE_LOCAL_DATA = /^(1|true|yes)$/i.test(String(process.env.FORCE_LOCAL_DATA || ""));
 
 const TABLES = {
   users: "admin_users",
@@ -10,8 +11,19 @@ const TABLES = {
   presentationSessions: "admin_presentation_sessions",
 };
 
+function shouldFallbackToLocal(error) {
+  const message = String(error?.message || error || "");
+  return (
+    message.startsWith("Supabase ") ||
+    message.includes("fetch failed") ||
+    message.includes("ECONNREFUSED") ||
+    message.includes("ENOTFOUND") ||
+    message.includes("network")
+  );
+}
+
 function hasSupabase() {
-  return Boolean(SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY);
+  return !FORCE_LOCAL_DATA && Boolean(SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY);
 }
 
 async function supabaseRequest(table, { method = "GET", query = "", body } = {}) {
@@ -61,20 +73,32 @@ export async function listAdminData() {
     };
   }
 
-  const [users, events, voiceSessions, presentationSessions] = await Promise.all([
-    supabaseRequest(TABLES.users, { query: "select=*&order=last_seen_at.desc" }),
-    supabaseRequest(TABLES.events, { query: "select=*&order=timestamp.desc&limit=200" }),
-    supabaseRequest(TABLES.voiceSessions, { query: "select=*&order=created_date.desc&limit=100" }),
-    supabaseRequest(TABLES.presentationSessions, { query: "select=*&order=created_date.desc&limit=100" }),
-  ]);
+  try {
+    const [users, events, voiceSessions, presentationSessions] = await Promise.all([
+      supabaseRequest(TABLES.users, { query: "select=*&order=last_seen_at.desc" }),
+      supabaseRequest(TABLES.events, { query: "select=*&order=timestamp.desc&limit=200" }),
+      supabaseRequest(TABLES.voiceSessions, { query: "select=*&order=created_date.desc&limit=100" }),
+      supabaseRequest(TABLES.presentationSessions, { query: "select=*&order=created_date.desc&limit=100" }),
+    ]);
 
-  return {
-    provider: "supabase",
-    users,
-    events,
-    voiceSessions,
-    presentationSessions,
-  };
+    return {
+      provider: "supabase",
+      users,
+      events,
+      voiceSessions,
+      presentationSessions,
+    };
+  } catch (error) {
+    if (shouldFallbackToLocal(error)) {
+      console.warn("Supabase admin store unavailable; falling back to local JSON.", error);
+      const db = await readAdminDb();
+      return {
+        provider: "local-json",
+        ...db,
+      };
+    }
+    throw error;
+  }
 }
 
 export async function appendAdminEvent({ type = "event", user, payload = {}, timestamp }) {
@@ -136,64 +160,228 @@ export async function appendAdminEvent({ type = "event", user, payload = {}, tim
     };
   }
 
-  if (safeUser) {
-    await supabaseRequest(TABLES.users, {
-      method: "POST",
-      body: {
-        ...safeUser,
-        last_seen_at: eventTimestamp,
-      },
-    }).catch(async () => {
-      await fetch(`${SUPABASE_URL}/rest/v1/${TABLES.users}?id=eq.${encodeURIComponent(safeUser.id)}`, {
-        method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-          apikey: SUPABASE_SERVICE_ROLE_KEY,
-          Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-          Prefer: "return=representation",
-        },
-        body: JSON.stringify({
+  try {
+    if (safeUser) {
+      await supabaseRequest(TABLES.users, {
+        method: "POST",
+        body: {
           ...safeUser,
           last_seen_at: eventTimestamp,
-        }),
+        },
+      }).catch(async () => {
+        await fetch(`${SUPABASE_URL}/rest/v1/${TABLES.users}?id=eq.${encodeURIComponent(safeUser.id)}`, {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+            apikey: SUPABASE_SERVICE_ROLE_KEY,
+            Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+            Prefer: "return=representation",
+          },
+          body: JSON.stringify({
+            ...safeUser,
+            last_seen_at: eventTimestamp,
+          }),
+        });
       });
-    });
-  }
+    }
 
-  await supabaseRequest(TABLES.events, {
-    method: "POST",
-    body: {
-      id: createId("event"),
-      type,
-      timestamp: eventTimestamp,
-      user_id: safeUser?.id || "",
-      user_email: safeUser?.email || "",
-      payload,
-    },
-  });
-
-  if (type === "voice_session_saved" && payload?.session) {
-    await supabaseRequest(TABLES.voiceSessions, {
+    await supabaseRequest(TABLES.events, {
       method: "POST",
-      body: payload.session,
+      body: {
+        id: createId("event"),
+        type,
+        timestamp: eventTimestamp,
+        user_id: safeUser?.id || "",
+        user_email: safeUser?.email || "",
+        payload,
+      },
     });
+
+    if (type === "voice_session_saved" && payload?.session) {
+      await supabaseRequest(TABLES.voiceSessions, {
+        method: "POST",
+        body: payload.session,
+      });
+    }
+
+    if (type === "presentation_session_saved" && payload?.session) {
+      await supabaseRequest(TABLES.presentationSessions, {
+        method: "POST",
+        body: payload.session,
+      });
+    }
+
+    const data = await listAdminData();
+    return {
+      provider: "supabase",
+      counts: {
+        users: data.users.length,
+        events: data.events.length,
+        voiceSessions: data.voiceSessions.length,
+        presentationSessions: data.presentationSessions.length,
+      },
+    };
+  } catch (error) {
+    if (shouldFallbackToLocal(error)) {
+      console.warn("Supabase admin write failed; writing to local JSON instead.", error);
+      const db = await mutateAdminDb((current) => {
+        const next = {
+          users: [...current.users],
+          events: [...current.events],
+          voiceSessions: [...current.voiceSessions],
+          presentationSessions: [...current.presentationSessions],
+        };
+
+        if (safeUser) {
+          const index = next.users.findIndex((entry) => entry.id === safeUser.id);
+          if (index >= 0) {
+            next.users[index] = {
+              ...next.users[index],
+              ...safeUser,
+              last_seen_at: eventTimestamp,
+            };
+          } else {
+            next.users.unshift({
+              ...safeUser,
+              last_seen_at: eventTimestamp,
+            });
+          }
+        }
+
+        next.events.unshift({
+          id: createId("event"),
+          type,
+          timestamp: eventTimestamp,
+          user_id: safeUser?.id || "",
+          user_email: safeUser?.email || "",
+          payload,
+        });
+
+        if (type === "voice_session_saved" && payload?.session) {
+          next.voiceSessions.unshift(payload.session);
+        }
+        if (type === "presentation_session_saved" && payload?.session) {
+          next.presentationSessions.unshift(payload.session);
+        }
+
+        return next;
+      });
+
+      return {
+        provider: "local-json",
+        counts: {
+          users: db.users.length,
+          events: db.events.length,
+          voiceSessions: db.voiceSessions.length,
+          presentationSessions: db.presentationSessions.length,
+        },
+      };
+    }
+    throw error;
+  }
+}
+
+export async function deleteAdminRecord({ collection, id }) {
+  if (!id) {
+    throw new Error("Record id is required");
   }
 
-  if (type === "presentation_session_saved" && payload?.session) {
-    await supabaseRequest(TABLES.presentationSessions, {
-      method: "POST",
-      body: payload.session,
+  if (!hasSupabase()) {
+    const db = await mutateAdminDb((current) => {
+      const next = {
+        users: [...current.users],
+        events: [...current.events],
+        voiceSessions: [...current.voiceSessions],
+        presentationSessions: [...current.presentationSessions],
+      };
+
+      if (collection === "events") {
+        next.events = next.events.filter((entry) => entry.id !== id);
+      } else if (collection === "voiceSessions") {
+        next.voiceSessions = next.voiceSessions.filter((entry) => entry.id !== id);
+      } else if (collection === "presentationSessions") {
+        next.presentationSessions = next.presentationSessions.filter((entry) => entry.id !== id);
+      } else {
+        throw new Error("Unsupported collection");
+      }
+
+      return next;
     });
+
+    return {
+      provider: "local-json",
+      counts: {
+        users: db.users.length,
+        events: db.events.length,
+        voiceSessions: db.voiceSessions.length,
+        presentationSessions: db.presentationSessions.length,
+      },
+    };
   }
 
-  const data = await listAdminData();
-  return {
-    provider: "supabase",
-    counts: {
-      users: data.users.length,
-      events: data.events.length,
-      voiceSessions: data.voiceSessions.length,
-      presentationSessions: data.presentationSessions.length,
-    },
-  };
+  const table = TABLES[collection];
+  if (!table) {
+    throw new Error("Unsupported collection");
+  }
+
+  try {
+    const response = await fetch(`${SUPABASE_URL}/rest/v1/${table}?id=eq.${encodeURIComponent(id)}`, {
+      method: "DELETE",
+      headers: {
+        "Content-Type": "application/json",
+        apikey: SUPABASE_SERVICE_ROLE_KEY,
+        Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+        Prefer: "return=representation",
+      },
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(`Supabase DELETE ${table} failed: ${response.status} ${text}`);
+    }
+
+    const data = await listAdminData();
+    return {
+      provider: "supabase",
+      counts: {
+        users: data.users.length,
+        events: data.events.length,
+        voiceSessions: data.voiceSessions.length,
+        presentationSessions: data.presentationSessions.length,
+      },
+    };
+  } catch (error) {
+    if (shouldFallbackToLocal(error)) {
+      console.warn("Supabase admin delete failed; deleting from local JSON instead.", error);
+      const db = await mutateAdminDb((current) => {
+        const next = {
+          users: [...current.users],
+          events: [...current.events],
+          voiceSessions: [...current.voiceSessions],
+          presentationSessions: [...current.presentationSessions],
+        };
+
+        if (collection === "events") {
+          next.events = next.events.filter((entry) => entry.id !== id);
+        } else if (collection === "voiceSessions") {
+          next.voiceSessions = next.voiceSessions.filter((entry) => entry.id !== id);
+        } else if (collection === "presentationSessions") {
+          next.presentationSessions = next.presentationSessions.filter((entry) => entry.id !== id);
+        }
+
+        return next;
+      });
+
+      return {
+        provider: "local-json",
+        counts: {
+          users: db.users.length,
+          events: db.events.length,
+          voiceSessions: db.voiceSessions.length,
+          presentationSessions: db.presentationSessions.length,
+        },
+      };
+    }
+    throw error;
+  }
 }

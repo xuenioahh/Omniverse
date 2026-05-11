@@ -5,26 +5,50 @@ import { ArrowLeft, Save, Home, CheckCircle, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { localApi } from "@/api/localClient";
 import { getScenario } from "@/lib/scenarios";
+import { generateVoiceReport } from "@/lib/localReports";
 import RadarChart from "@/components/report/RadarChart";
 import { toast } from "sonner";
+import LoadingProgressCard from "@/components/LoadingProgressCard";
+
+function safeParseMessages(raw) {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function safeParseObject(raw) {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
 
 export default function VoiceReport() {
   const navigate = useNavigate();
   const location = useLocation();
   const params = new URLSearchParams(location.search);
-  const scenarioId = params.get("scenario");
-  const mode = params.get("mode");
-  const dialogMode = params.get("dialogMode");
-  const scoring = params.get("scoring");
-  const duration = parseInt(params.get("duration") || "0");
-  const words = parseInt(params.get("words") || "0");
-  const exchanges = parseInt(params.get("exchanges") || "0");
+  const storedContext = safeParseObject(sessionStorage.getItem("voiceReportContext")) || {};
+  const scenarioId = params.get("scenario") || storedContext.scenario || "";
+  const mode = params.get("mode") || storedContext.mode || "basic";
+  const dialogMode = params.get("dialogMode") || storedContext.dialogMode || "free_talk";
+  const scoring = params.get("scoring") || storedContext.scoring || "daily";
+  const duration = parseInt(params.get("duration") || `${storedContext.duration || 0}`, 10);
+  const words = parseInt(params.get("words") || `${storedContext.words || 0}`, 10);
+  const exchanges = parseInt(params.get("exchanges") || `${storedContext.exchanges || 0}`, 10);
 
   const scenario = getScenario(scenarioId);
   const [report, setReport] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [reportError, setReportError] = useState("");
 
   useEffect(() => {
     if (!scenario) {
@@ -43,10 +67,19 @@ export default function VoiceReport() {
   }
 
   const generateReport = async () => {
-    try {
-      const storedMessages = sessionStorage.getItem("voiceMessages");
-      const messages = storedMessages ? JSON.parse(storedMessages) : [];
+    const messages = safeParseMessages(sessionStorage.getItem("voiceMessages"));
+    const fallbackReport = generateVoiceReport({
+      messages,
+      scoring,
+      duration,
+      words,
+      exchanges,
+      scenarioTitle: scenario?.title || "Practice Session",
+      mode,
+      dialogMode,
+    });
 
+    try {
       const result = await localApi.integrations.Core.InvokeLLM({
         input: {
           kind: "voice-report",
@@ -61,45 +94,58 @@ export default function VoiceReport() {
         },
       });
 
-      setReport(result);
-      await localApi.integrations.Core.TrackActivity({
-        activity_type: "voice_report_generated",
-        scenario: scenarioId,
-        mode,
-        dialog_mode: dialogMode,
-        scoring_standard: scoring,
-        duration_seconds: duration,
-        words_spoken: words,
-        total_exchanges: exchanges,
-        report_summary: {
-          totalScore: result?.totalScore || null,
-          scores: result?.scores || null,
-        },
-      });
+      setReport(result || fallbackReport);
+      setReportError("");
+
+      try {
+        await localApi.integrations.Core.TrackActivity({
+          activity_type: "voice_report_generated",
+          scenario: scenarioId,
+          mode,
+          dialog_mode: dialogMode,
+          scoring_standard: scoring,
+          duration_seconds: duration,
+          words_spoken: words,
+          total_exchanges: exchanges,
+          report_summary: {
+            totalScore: result?.totalScore || null,
+            scores: result?.scores || null,
+          },
+        });
+      } catch (trackingError) {
+        console.error("Failed to track voice report generation:", trackingError);
+      }
     } catch (error) {
       console.error("Failed to generate voice report:", error);
-      navigate("/voice");
+      setReport(fallbackReport);
+      setReportError(error?.message || "Failed to generate report.");
     } finally {
       setLoading(false);
     }
   };
 
   const handleSave = async () => {
-    setSaving(true);
-    await localApi.entities.VoiceSession.create({
-      scenario: scenarioId,
-      mode,
-      dialog_mode: dialogMode,
-      scoring_standard: scoring,
-      messages: JSON.parse(sessionStorage.getItem("voiceMessages") || "[]"),
-      report,
-      duration_seconds: duration,
-      words_spoken: words,
-      total_exchanges: exchanges,
-    });
-    setSaved(true);
-    setSaving(false);
-    toast.success("Report saved successfully!");
+    try {
+      setSaving(true);
+      await localApi.entities.VoiceSession.create({
+        scenario: scenarioId,
+        mode,
+        dialog_mode: dialogMode,
+        scoring_standard: scoring,
+        messages: safeParseMessages(sessionStorage.getItem("voiceMessages")),
+        report,
+        duration_seconds: duration,
+        words_spoken: words,
+        total_exchanges: exchanges,
+      });
+      setSaved(true);
+      toast.success("Report saved successfully!");
+    } catch (error) {
+      console.error("Failed to save voice report:", error);
+      toast.error(error?.message || "Failed to save report.");
+    } finally {
+      setSaving(false);
+    }
   };
 
   const isIelts = scoring === "ielts";
@@ -119,12 +165,17 @@ export default function VoiceReport() {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="text-center space-y-3">
-          <Loader2 className="w-8 h-8 animate-spin text-primary mx-auto" />
-          <p className="text-sm text-muted-foreground">Generating your report...</p>
-        </div>
-      </div>
+      <LoadingProgressCard
+        title="Generating speaking report"
+        description="Reviewing the conversation and calculating your speaking score."
+        durationMs={7200}
+        steps={[
+          "Reading conversation history",
+          "Scoring language performance",
+          "Summarizing feedback",
+          "Preparing your report",
+        ]}
+      />
     );
   }
 
@@ -142,6 +193,12 @@ export default function VoiceReport() {
       </div>
 
       <div className="px-4 py-4 space-y-4">
+        {reportError && (
+          <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="glass rounded-2xl p-4 border border-amber-400/30">
+            <p className="text-sm font-medium text-amber-200">Report generation issue</p>
+            <p className="mt-1 text-xs text-amber-100/90 break-words">{reportError}</p>
+          </motion.div>
+        )}
         {/* Radar Chart */}
         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="glass rounded-2xl p-4">
           <h3 className="text-sm font-semibold text-center mb-2">📊 Performance Overview</h3>

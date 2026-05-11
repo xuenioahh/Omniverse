@@ -56,14 +56,12 @@ export default function Presentation() {
       URL.revokeObjectURL(previousUrl);
       sessionStorage.removeItem("presentationFileUrl");
     }
-    const allowed = ["application/pdf", "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-      "application/vnd.ms-powerpoint", "application/msword",
-      "application/vnd.openxmlformats-officedocument.wordprocessingml.document"];
-    const isAllowed = allowed.includes(selectedFile.type) || 
-      [".pdf", ".ppt", ".pptx", ".doc", ".docx"].some(ext => selectedFile.name.toLowerCase().endsWith(ext));
+    const allowed = ["application/pdf"];
+    const isAllowed = allowed.includes(selectedFile.type) ||
+      selectedFile.name.toLowerCase().endsWith(".pdf");
     
     if (!isAllowed) {
-      alert("Please upload a PPT, PPTX, DOC, or DOCX file.");
+      alert("Please upload a PDF file only.");
       return;
     }
     setFile(selectedFile);
@@ -157,7 +155,7 @@ export default function Presentation() {
       <div className="px-4 space-y-4">
         {/* File Upload */}
         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.05 }}>
-          <h2 className="text-sm font-semibold text-foreground mb-2">📄 Upload Your File</h2>
+          <h2 className="text-sm font-semibold text-foreground mb-2">📄 Upload Your PDF</h2>
           <div
             onDrop={handleDrop}
             onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
@@ -170,7 +168,7 @@ export default function Presentation() {
             <input
               ref={fileInputRef}
               type="file"
-              accept=".pdf,.ppt,.pptx,.doc,.docx"
+              accept=".pdf,application/pdf"
               className="hidden"
               onChange={(e) => handleFileSelect(e.target.files[0])}
             />
@@ -205,9 +203,9 @@ export default function Presentation() {
                   <Upload className="w-7 h-7 text-muted-foreground" />
                 </div>
                 <div>
-                  <p className="text-sm font-medium text-foreground">Drop your file here</p>
+                  <p className="text-sm font-medium text-foreground">Drop your PDF here</p>
                   <p className="text-xs text-muted-foreground mt-0.5">or click to browse</p>
-                  <p className="text-[10px] text-muted-foreground/60 mt-1">PPT, PPTX, DOC, DOCX</p>
+                  <p className="text-[10px] text-muted-foreground/60 mt-1">PDF only</p>
                 </div>
               </div>
             )}
@@ -276,7 +274,7 @@ export default function Presentation() {
           )}
           {!canStart && (
             <p className="text-center text-xs text-muted-foreground mb-2">
-              {!file ? "Upload a document to continue" : "You can start now. Video is optional."}
+              {!file ? "Upload a PDF to continue" : "You can start now. Video is optional."}
             </p>
           )}
           <Button

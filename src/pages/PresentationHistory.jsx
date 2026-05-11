@@ -25,6 +25,31 @@ const TED_TALKS = [
   },
 ];
 
+function clampPresentationScore(value, fallback = null) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return fallback;
+  }
+  return Math.max(0, Math.min(10, numeric));
+}
+
+function resolveOverallScore(report) {
+  const direct = clampPresentationScore(report?.overall_score);
+  if (Number.isFinite(direct)) {
+    return Math.round(direct * 10) / 10;
+  }
+
+  const values = Object.values(report?.scores || {})
+    .map((value) => Number(value))
+    .filter((value) => Number.isFinite(value));
+
+  if (!values.length) {
+    return null;
+  }
+
+  return Math.round((values.reduce((sum, value) => sum + value, 0) / values.length) * 10) / 10;
+}
+
 export default function PresentationHistory() {
   const location = useLocation();
   const navigate = useNavigate();
@@ -107,6 +132,7 @@ export default function PresentationHistory() {
           sessions.map((session, i) => {
             const isOpen = expanded === session.id;
             const report = session.report;
+            const overallScore = resolveOverallScore(report);
 
             return (
               <motion.div
@@ -140,9 +166,9 @@ export default function PresentationHistory() {
                       )}
                     </div>
                   </div>
-                  {report?.overall_score != null && (
+                  {overallScore != null && (
                     <div className="text-right flex-shrink-0">
-                      <p className={`text-lg font-bold ${scoreColor(report.overall_score)}`}>{report.overall_score}</p>
+                      <p className={`text-lg font-bold ${scoreColor(overallScore)}`}>{overallScore}</p>
                       <p className="text-[9px] text-muted-foreground">/10</p>
                     </div>
                   )}
@@ -164,7 +190,7 @@ export default function PresentationHistory() {
                         {/* Overall Score */}
                         <div className="glass rounded-2xl p-4 text-center">
                           <p className="text-xs font-semibold text-muted-foreground mb-1">⭐ Overall Score</p>
-                          <div className={`text-4xl font-bold font-space ${scoreColor(report.overall_score)}`}>{report.overall_score}</div>
+                          <div className={`text-4xl font-bold font-space ${scoreColor(overallScore ?? 0)}`}>{overallScore ?? "-"}</div>
                           <p className="text-[10px] text-muted-foreground">out of 10</p>
                         </div>
 

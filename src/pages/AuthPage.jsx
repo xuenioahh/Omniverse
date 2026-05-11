@@ -7,6 +7,7 @@ import { useAuth } from "@/lib/AuthContext";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
+import LegalDialog from "@/components/LegalDialog";
 
 const initialForm = {
   full_name: "",
@@ -135,6 +136,24 @@ export default function AuthPage() {
           >
             {isRegister ? "Already have an account? Sign in" : "Need an account? Register"}
           </button>
+        </div>
+
+        <div className="mt-5 border-t border-white/8 pt-4 text-center space-y-2">
+          <p className="text-[11px] leading-relaxed text-muted-foreground">
+            By continuing, you acknowledge the educational-use disclaimer and the privacy notice for saved practice data.
+          </p>
+          <div className="flex items-center justify-center gap-4 text-[12px]">
+            <LegalDialog type="disclaimer">
+              <button type="button" className="text-primary hover:text-primary/80 transition-colors">
+                Disclaimer
+              </button>
+            </LegalDialog>
+            <LegalDialog type="privacy">
+              <button type="button" className="text-primary hover:text-primary/80 transition-colors">
+                Privacy Notice
+              </button>
+            </LegalDialog>
+          </div>
         </div>
       </motion.div>
     </div>

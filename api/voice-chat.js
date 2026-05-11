@@ -1,3 +1,5 @@
+import { requestStructuredLlm } from "./_llm.js";
+
 function buildSystemPrompt({ scenario, scenarioData, mode, scoring, isGoalOriented }) {
   const role = scenario?.aiRole || "conversation partner";
   const title = scenario?.title || "General English Practice";
@@ -6,35 +8,32 @@ function buildSystemPrompt({ scenario, scenarioData, mode, scoring, isGoalOrient
     ? `Goal: ${scenarioData?.goal || "Help the user complete the task clearly."}`
     : `Topic: ${scenarioData?.topic || title}`;
   const scoringGuide = scoring === "ielts"
-    ? "IELTS style: encourage fuller, natural answers with a clear opinion, reason, and example."
+    ? "Ask for a reason and example."
     : scoring === "toefl"
-      ? "TOEFL style: encourage organized answers with a main point and supporting detail."
-      : "Daily style: keep it natural, conversational, and practical.";
+      ? "Ask for one main point and one detail."
+      : "Keep it practical and natural.";
   const difficultyGuide = mode === "advanced"
-    ? "Advanced mode: use natural but slightly richer English and ask sharper follow-up questions."
-    : "Basic mode: keep your English clear, supportive, and easy to follow.";
+    ? "Use natural richer English."
+    : "Use clear easy English.";
   const dialogGuide = isGoalOriented
-    ? "Goal-oriented mode: stay in role and move the task forward step by step. Ask for missing details needed to complete the task."
-    : "Free-talk mode: stay in role and chat naturally. Ask follow-up questions about feelings, reasons, examples, or experiences.";
+    ? "Stay on task and ask only for missing details."
+    : "Stay in role and ask one useful follow-up.";
 
   return [
-    `You are roleplaying as ${role} in a scenario called ${title}.`,
-    `The user is roleplaying as ${userRole}.`,
+    `Role: ${role}. Scenario: ${title}. User role: ${userRole}.`,
     objective,
     scoringGuide,
     difficultyGuide,
     dialogGuide,
-    "Sound human, warm, and concise. Do not say phrases like 'As the ... I understand ...'.",
-    "Do not describe yourself as an AI. Stay in character.",
-    "Your main reply should feel like a realistic spoken response from the character.",
-    "Also provide short speaking feedback for grammar, vocabulary, pronunciation, and task completion.",
-    "Return strict JSON only with this shape: {\"reply\":\"...\",\"feedback\":{\"grammar\":\"...\",\"vocabulary\":\"...\",\"pronunciation\":\"...\",\"task\":\"...\"}}",
+    "Be human, warm, short, and stay in character.",
+    "Reply in 1-2 short sentences.",
+    "Return JSON: {\"reply\":\"...\",\"feedback\":{\"grammar\":\"...\",\"vocabulary\":\"...\",\"pronunciation\":\"...\",\"task\":\"...\"}}",
   ].join(" ");
 }
 
 function buildUserPrompt({ history, userText }) {
   const recent = (Array.isArray(history) ? history : [])
-    .slice(-8)
+    .slice(-2)
     .map((message) => `${message.role === "ai" ? "Assistant" : "User"}: ${message.content}`)
     .join("\n");
 
@@ -44,19 +43,25 @@ function buildUserPrompt({ history, userText }) {
   ].filter(Boolean).join("\n\n");
 }
 
-function safeJsonParse(text) {
-  try {
-    return JSON.parse(text);
-  } catch {
-    const match = text.match(/\{[\s\S]*\}/);
-    if (!match) return null;
-    try {
-      return JSON.parse(match[0]);
-    } catch {
-      return null;
-    }
-  }
-}
+const STRUCTURED_REPLY_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    reply: { type: "string" },
+    feedback: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        grammar: { type: "string" },
+        vocabulary: { type: "string" },
+        pronunciation: { type: "string" },
+        task: { type: "string" },
+      },
+      required: ["grammar", "vocabulary", "pronunciation", "task"],
+    },
+  },
+  required: ["reply", "feedback"],
+};
 
 function fallbackPayload({ userText, isGoalOriented, scenarioData, scoring, mode }) {
   const safeUserText = String(userText || "").trim();
@@ -79,6 +84,7 @@ function fallbackPayload({ userText, isGoalOriented, scenarioData, scoring, mode
 
   return {
     source: "fallback",
+    fallback_reason: "model_unavailable",
     reply: isGoalOriented
       ? `${reflective} Let's focus on ${topic.toLowerCase()}. What exactly do you need help with? ${styleTail}`
       : `${reflective} Tell me a little more about ${topic.toLowerCase()}. ${styleTail}`,
@@ -99,53 +105,34 @@ export default async function handler(req, res) {
     return;
   }
 
-  const apiKey = process.env.OPENAI_API_KEY;
   const payload = req.body || {};
   const { scenario, scenarioData, history, userText, mode, scoring, isGoalOriented } = payload;
 
-  if (!apiKey) {
-    res.status(200).json(fallbackPayload({ userText, isGoalOriented, scenarioData, scoring, mode }));
-    return;
-  }
-
   try {
-    const response = await fetch("https://api.openai.com/v1/responses", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: "gpt-5.4-mini",
-        input: [
-          {
-            role: "system",
-            content: [{ type: "input_text", text: buildSystemPrompt({ scenario, scenarioData, mode, scoring, isGoalOriented }) }],
-          },
-          {
-            role: "user",
-            content: [{ type: "input_text", text: buildUserPrompt({ history, userText }) }],
-          },
-        ],
-      }),
+    const { provider, model, parsed } = await requestStructuredLlm({
+      schemaName: "voice_chat_reply",
+      schema: STRUCTURED_REPLY_SCHEMA,
+      openaiModels: [
+        process.env.OPENAI_VOICE_CHAT_MODEL,
+        "gpt-5-mini",
+        "gpt-5",
+        "gpt-4.1",
+      ],
+      openrouterModels: [
+        process.env.OPENROUTER_VOICE_CHAT_MODEL,
+        "openrouter/free",
+      ],
+      timeoutMs: 7800,
+      maxModelsPerProvider: 1,
+      retryOnce: true,
+      systemText: buildSystemPrompt({ scenario, scenarioData, mode, scoring, isGoalOriented }),
+      userText: buildUserPrompt({ history, userText }),
     });
-
-    if (!response.ok) {
-      const text = await response.text();
-      throw new Error(`OpenAI error ${response.status}: ${text}`);
-    }
-
-    const data = await response.json();
-    const text = data.output_text || "";
-    const parsed = safeJsonParse(text);
-
-    if (!parsed?.reply) {
-      res.status(200).json(fallbackPayload({ userText, isGoalOriented, scenarioData, scoring, mode }));
-      return;
-    }
 
     res.status(200).json({
       source: "ai",
+      provider,
+      model,
       reply: parsed.reply,
       feedback: {
         grammar: parsed.feedback?.grammar || "",
@@ -156,6 +143,9 @@ export default async function handler(req, res) {
     });
   } catch (error) {
     console.error("voice-chat api error:", error);
-    res.status(200).json(fallbackPayload({ userText, isGoalOriented, scenarioData, scoring, mode }));
+    res.status(200).json({
+      ...fallbackPayload({ userText, isGoalOriented, scenarioData, scoring, mode }),
+      fallback_reason: error?.message || "request_failed",
+    });
   }
 }

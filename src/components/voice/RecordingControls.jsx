@@ -50,7 +50,7 @@ export default function RecordingControls({ onSend, disabled }) {
     }
   }, [onSend, stopRecording, typedText]);
 
-  const resetSilenceTimer = useCallback((delay = 1200) => {
+  const resetSilenceTimer = useCallback((delay = 850) => {
     if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
     silenceTimerRef.current = setTimeout(() => {
       if (transcriptRef.current.trim()) {
@@ -88,7 +88,7 @@ export default function RecordingControls({ onSend, disabled }) {
       const fullText = finalTranscript + interimTranscript;
       transcriptRef.current = fullText;
       setTranscript(fullText);
-      resetSilenceTimer(hasFreshFinal ? 700 : 1200);
+      resetSilenceTimer(hasFreshFinal ? 420 : 850);
     };
 
     recognition.onerror = (event) => {
@@ -105,7 +105,7 @@ export default function RecordingControls({ onSend, disabled }) {
       window.setTimeout(() => {
         if (!shouldRestartRef.current || !isRecordingRef.current) return;
         startRecording();
-      }, 180);
+      }, 120);
     };
 
     recognitionRef.current = recognition;

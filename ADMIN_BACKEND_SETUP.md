@@ -41,11 +41,20 @@ Run this SQL file in Supabase SQL Editor:
 
 `supabase/admin_schema.sql`
 
+Run this app data SQL too:
+
+`supabase/app_schema.sql`
+
 It creates:
 - `admin_users`
 - `admin_events`
 - `admin_voice_sessions`
 - `admin_presentation_sessions`
+- `app_users`
+- `app_voice_sessions`
+- `app_presentation_sessions`
+- `app_activity_records`
+- `app_settings`
 
 It also adds:
 - primary keys
@@ -67,4 +76,5 @@ VITE_ADMIN_EMAILS=admin@example.com
 
 - If Supabase env vars are missing, the app falls back to `local-json`
 - If Supabase env vars are present, `/api/admin-track` reads/writes through Supabase
+- If Supabase env vars are present, `/api/local-data` also reads/writes through Supabase
 - The admin dashboard at `/admin` shows the active provider

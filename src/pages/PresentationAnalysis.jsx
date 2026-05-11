@@ -4,6 +4,7 @@ import { motion } from "framer-motion";
 import { ArrowLeft, Play, Sparkles, Lightbulb, Flag, PanelsTopLeft, CircleCheckBig } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { localApi } from "@/api/localClient";
+import LoadingProgressCard from "@/components/LoadingProgressCard";
 
 const FLOW_ICONS = [Flag, PanelsTopLeft, CircleCheckBig];
 
@@ -11,8 +12,9 @@ export default function PresentationAnalysis() {
   const navigate = useNavigate();
   const [analysis, setAnalysis] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [statusMessage, setStatusMessage] = useState("Preparing your document...");
+  const [statusMessage, setStatusMessage] = useState("Preparing your PDF...");
   const [errorMessage, setErrorMessage] = useState("");
+  const [fallbackReason, setFallbackReason] = useState("");
 
   const fileName = sessionStorage.getItem("presentationFile");
   const fileType = sessionStorage.getItem("presentationFileType") || "";
@@ -27,7 +29,7 @@ export default function PresentationAnalysis() {
     let intervalId = null;
 
     const buildFallbackAnalysis = (pageTexts) => ({
-      title: fileName || "Presentation File",
+      title: fileName || "Presentation PDF",
       overviewCards: [
         { value: `${Math.max((pageTexts || []).length, 1)} page${Math.max((pageTexts || []).length, 1) === 1 ? "" : "s"}` },
         { value: "Lead with the main topic" },
@@ -77,11 +79,13 @@ export default function PresentationAnalysis() {
         if (cancelled) return;
         setAnalysis(result || buildFallbackAnalysis(pageTexts));
         setErrorMessage("");
+        setFallbackReason(result?.fallback_reason || "");
       } catch (error) {
         console.error("Failed to generate presentation analysis:", error);
         if (cancelled) return;
         setAnalysis(buildFallbackAnalysis(pageTexts));
         setErrorMessage("The automatic plan could not be generated, so a quick fallback plan is shown instead.");
+        setFallbackReason(error?.message || "request_failed");
       } finally {
         if (!cancelled) {
           setLoading(false);
@@ -114,14 +118,17 @@ export default function PresentationAnalysis() {
 
   if (loading || !analysis) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="text-center space-y-3">
-          <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-amber-500 to-orange-600 flex items-center justify-center mx-auto">
-            <Sparkles className="w-5 h-5 text-white animate-pulse" />
-          </div>
-          <p className="text-[15px] text-muted-foreground">{statusMessage}</p>
-        </div>
-      </div>
+      <LoadingProgressCard
+        title="Preparing practice plan"
+        description={statusMessage}
+        durationMs={6500}
+        steps={[
+          "Opening your PDF context",
+          "Finding the main structure",
+          "Building speaking prompts",
+          "Preparing your rehearsal plan",
+        ]}
+      />
     );
   }
 
@@ -131,6 +138,9 @@ export default function PresentationAnalysis() {
         {errorMessage && (
           <div className="glass rounded-2xl px-4 py-3">
             <p className="text-[14px] text-amber-200">{errorMessage}</p>
+            {fallbackReason && (
+              <p className="text-[12px] text-amber-100/80 mt-2 break-words">Reason: {fallbackReason}</p>
+            )}
           </div>
         )}
         <div className="px-1">

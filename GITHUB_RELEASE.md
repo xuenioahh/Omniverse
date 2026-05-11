@@ -8,6 +8,14 @@
 
 Omniverse is a local-first speaking practice web application developed for `ENT208TC Session 4 Group 25`.
 
+Team members:
+
+- Yujie Yang — `2363253`
+- Zihan Jiang — `2362327`
+- Yile Zhang — `2363305`
+- Xinyu Shen — `2363210`
+- Zhuoru Zhang — `2363097`
+
 This release presents the project as a standalone coursework deliverable focused on two main workflows:
 
 - scenario-based voice conversation practice

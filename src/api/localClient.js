@@ -12,18 +12,43 @@ function redirectTo(path) {
   }
 }
 
-function buildEntityStore(collection) {
+async function apiRequest(action, payload = {}) {
+  const response = await fetch("/api/local-data", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-user-id": localStore.session.currentUserIdOrNull(),
+    },
+    body: JSON.stringify({
+      action,
+      ...payload,
+    }),
+  });
+
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok || !result?.ok) {
+    const error = new Error(result?.error || `Request failed with ${response.status}`);
+    if (result?.code) {
+      error.code = result.code;
+    }
+    throw error;
+  }
+
+  return result.data;
+}
+
+function buildEntityStore(entity, prefix) {
   return {
     async list(sort, limit) {
-      return collection.list(sort, limit);
+      return apiRequest("listEntity", { entity, sort, limit });
     },
     async create(payload) {
-      const created = collection.create(payload);
+      const created = await apiRequest("createEntity", { entity, prefix, data: payload });
       emitActivitySync({ type: "entity:create" });
       return created;
     },
     async delete(id) {
-      collection.delete(id);
+      await apiRequest("deleteEntity", { entity, id });
       emitActivitySync({ type: "entity:delete" });
     },
   };
@@ -31,7 +56,7 @@ function buildEntityStore(collection) {
 
 async function syncAdminEvent(type, payload = {}) {
   try {
-    const user = localStore.auth.currentUserOrNull();
+    const user = await apiRequest("me").catch(() => null);
     await fetch("/api/admin-track", {
       method: "POST",
       headers: {
@@ -62,29 +87,31 @@ async function syncAdminEvent(type, payload = {}) {
 export const localApi = {
   auth: {
     async me() {
-      return localStore.auth.currentUser();
+      return apiRequest("me");
     },
     async updateMe(patch) {
-      const updated = localStore.auth.updateCurrentUser(patch);
+      const updated = await apiRequest("updateMe", patch);
       emitActivitySync({ type: "user:update" });
       await syncAdminEvent("user_updated", { patch, user: updated });
       return updated;
     },
     async login(payload) {
-      const loggedIn = localStore.auth.login(payload);
+      const loggedIn = await apiRequest("login", payload);
+      localStore.session.setCurrentUserId(loggedIn?.id || "");
       emitActivitySync({ type: "auth:login" });
       await syncAdminEvent("user_logged_in", { email: loggedIn?.email || payload?.email || "" });
       return loggedIn;
     },
     async register(payload) {
-      const registered = localStore.auth.register(payload);
+      const registered = await apiRequest("register", payload);
+      localStore.session.setCurrentUserId(registered?.id || "");
       emitActivitySync({ type: "auth:register" });
       await syncAdminEvent("user_registered", { email: registered?.email || payload?.email || "" });
       return registered;
     },
     logout(redirectPath = "/") {
       void syncAdminEvent("user_logged_out", { redirectPath });
-      localStore.auth.logout();
+      localStore.session.clearCurrentUserId();
       emitActivitySync({ type: "auth:logout" });
       redirectTo(redirectPath);
     },
@@ -92,31 +119,78 @@ export const localApi = {
       redirectTo(redirectPath);
     },
   },
+  admin: {
+    async listSettings() {
+      return apiRequest("listAdminSettings");
+    },
+    async addEmail(email) {
+      return apiRequest("addAdminEmail", { email });
+    },
+    async removeEmail(email) {
+      return apiRequest("removeAdminEmail", { email });
+    },
+    async deleteRecord(collection, id, adminKey = "") {
+      const response = await fetch("/api/admin-track", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-user-id": localStore.session.currentUserIdOrNull(),
+          ...(adminKey ? { "x-admin-key": adminKey } : {}),
+        },
+        body: JSON.stringify({
+          action: "delete_record",
+          collection,
+          id,
+        }),
+      });
+
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || !result?.ok) {
+        throw new Error(result?.error || `Delete failed with ${response.status}`);
+      }
+      return result;
+    },
+  },
   entities: {
-    VoiceSession: buildEntityStore({
-      ...localStore.voiceSessions,
-      create(payload) {
-        const created = localStore.voiceSessions.create(payload);
+    VoiceSession: {
+      ...buildEntityStore("VoiceSession", "voice"),
+      async create(payload) {
+        const created = await apiRequest("createEntity", {
+          entity: "VoiceSession",
+          prefix: "voice",
+          data: payload,
+        });
         void syncAdminEvent("voice_session_saved", { session: created });
+        emitActivitySync({ type: "entity:create" });
         return created;
       },
-    }),
-    PresentationSession: buildEntityStore({
-      ...localStore.presentationSessions,
-      create(payload) {
-        const created = localStore.presentationSessions.create(payload);
+    },
+    PresentationSession: {
+      ...buildEntityStore("PresentationSession", "presentation"),
+      async create(payload) {
+        const created = await apiRequest("createEntity", {
+          entity: "PresentationSession",
+          prefix: "presentation",
+          data: payload,
+        });
         void syncAdminEvent("presentation_session_saved", { session: created });
+        emitActivitySync({ type: "entity:create" });
         return created;
       },
-    }),
-    ActivityRecord: buildEntityStore({
-      ...localStore.activityRecords,
-      create(payload) {
-        const created = localStore.activityRecords.create(payload);
+    },
+    ActivityRecord: {
+      ...buildEntityStore("ActivityRecord", "activity"),
+      async create(payload) {
+        const created = await apiRequest("createEntity", {
+          entity: "ActivityRecord",
+          prefix: "activity",
+          data: payload,
+        });
         void syncAdminEvent("activity_record_saved", { activity: created });
+        emitActivitySync({ type: "entity:create" });
         return created;
       },
-    }),
+    },
   },
   integrations: {
     Core: {
@@ -125,7 +199,11 @@ export const localApi = {
         return { file_url };
       },
       async TrackActivity(payload) {
-        const activity = localStore.activityRecords.create(payload || {});
+        const activity = await apiRequest("createEntity", {
+          entity: "ActivityRecord",
+          prefix: "activity",
+          data: payload || {},
+        });
         emitActivitySync({ type: "activity:track" });
         await syncAdminEvent("activity_tracked", { activity });
         return activity;

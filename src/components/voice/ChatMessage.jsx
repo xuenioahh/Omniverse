@@ -45,6 +45,16 @@ export default function ChatMessage({ message, voiceGender, isActive = false, re
           <span className="text-xs font-medium text-muted-foreground">
             {isUser ? "You" : message.aiRole || "AI"}
           </span>
+          {!isUser && message.source === "fallback" && (
+            <span className="rounded-full border border-amber-400/30 bg-amber-500/10 px-2 py-0.5 text-[10px] text-amber-200">
+              Fallback
+            </span>
+          )}
+          {!isUser && message.model && (
+            <span className="rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] text-muted-foreground">
+              {message.model}
+            </span>
+          )}
           <span className="text-[10px] text-muted-foreground/60">{message.time}</span>
         </div>
 
@@ -57,6 +67,11 @@ export default function ChatMessage({ message, voiceGender, isActive = false, re
               : "glass rounded-tl-md border-white/5"
         }`}>
           <p className="text-sm leading-relaxed">{message.content}</p>
+          {!isUser && message.fallbackReason && (
+            <p className="mt-2 text-[10px] text-amber-200/90 break-words">
+              Reason: {message.fallbackReason}
+            </p>
+          )}
           {!isUser && message.visual && (
             <div className="mt-3 max-w-[220px] rounded-2xl overflow-hidden border border-white/8 bg-black/20">
               <div className="aspect-[4/3] overflow-hidden">
