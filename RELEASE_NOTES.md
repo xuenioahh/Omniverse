@@ -1,8 +1,8 @@
 # Release Notes
 
-## Omniverse Coursework Release
+## SpeakNow Coursework Release
 
-Omniverse is a speaking-practice web application developed for `ENT208TC Session 4 Group 25`. This release packages the project as a standalone repository focused on two core communication workflows: scenario-based voice conversation practice and presentation rehearsal.
+SpeakNow is a speaking-practice web application developed for `ENT208TC Session 4 Group 25`. This release packages the project as a standalone repository focused on two core communication workflows: scenario-based voice conversation practice and presentation rehearsal.
 
 ## Release Summary
 

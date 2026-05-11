@@ -2,11 +2,11 @@
 
 ## Release Title
 
-`Omniverse Coursework Release v1.0`
+`SpeakNow Coursework Release v1.0`
 
 ## Release Body
 
-Omniverse is a local-first speaking practice web application developed for `ENT208TC Session 4 Group 25`.
+SpeakNow is a local-first speaking practice web application developed for `ENT208TC Session 4 Group 25`.
 
 Team members:
 
