@@ -10,8 +10,8 @@ Team Members
 - Yile Zhang — 2363305
 - Xinyu Shen — 2363210
 - Zhuoru Zhang — 2363097
-- Zimu Zhang — [student ID pending]
-- Ye Li — [student ID pending]
+- Zimu Zhang — 2364249
+- Ye Li — 2362556
 
 ## 1. System Architecture
 
